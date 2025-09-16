@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Hasil Ekstraksi — Stego-Web{% endblock %}
+{% block content %}
+  <h1 class="page-title">Hasil Ekstraksi</h1>
+  <div class="card">
+    <p><strong>Nama file:</strong> {{ filename }}</p>
+    {% if is_text %}
+      <h3>Preview Teks</h3>
+      <pre class="preview">{{ preview_text }}</pre>
+    {% else %}
+      <p class="muted">File bukan teks (binary), preview tidak tersedia.</p>
+    {% endif %}
+
+    <div class="actions">
+      <a class="btn primary" href="{{ url_for('download_extracted') }}">Download File</a>
+      <a class="btn ghost" href="{{ url_for('index') }}">← Kembali</a>
+    </div>
+  </div>
+{% endblock %}

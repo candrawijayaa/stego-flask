@@ -1,67 +1,63 @@
-<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <title>Stego-Web (Flask) — Embed & Extract</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    body { font-family: Arial, Helvetica, sans-serif; margin: 32px; max-width: 900px; }
-    h1 { margin-bottom: 6px; }
-    .card { border: 1px solid #ddd; padding: 16px; border-radius: 8px; margin-bottom: 18px; }
-    label { display:block; margin-top:8px; font-weight:600; }
-    input[type="file"], textarea, input[type="text"] { width:100%; }
-    .row { display:flex; gap:16px; }
-    .col { flex:1; }
-    button { padding:10px 14px; border-radius:6px; border:none; background:#1976d2; color:white; cursor:pointer; }
-    .note { font-size:0.9em; color:#555; }
-    .flash { background:#ffefef; border:1px solid #f2caca; padding:8px; border-radius:6px; margin-bottom:12px; color:#6a0000; }
-  </style>
-</head>
-<body>
-  <h1>Stego-Web (LSB) — Embed & Extract</h1>
-  {% with messages = get_flashed_messages() %}
-    {% if messages %}
-      <div class="flash">
-        {% for m in messages %}
-          <div>{{m}}</div>
-        {% endfor %}
+{% extends "base.html" %}
+{% block title %}Stego-Web — Embed & Extract{% endblock %}
+{% block content %}
+  <h1 class="page-title">Steganography (LSB) — Web Interface</h1>
+  <p class="page-subtitle">Sisipkan atau ambil data rahasia dari gambar secara mudah. Aman di semua ukuran layar.</p>
+
+  <section class="grid-two">
+    <div class="card">
+      <h2>Embed (Sisipkan Data)</h2>
+      <form action="{{ url_for('embed_route') }}" method="post" enctype="multipart/form-data" class="form">
+        <label class="label">Cover image <span class="hint">(PNG/BMP direkomendasikan)</span></label>
+
+        <div class="dropzone" data-for="cover_image">
+          <input id="cover_image" name="cover_image" type="file" accept="image/*" required>
+          <div class="dz-in">
+            <strong>Tarik & lepas</strong> file ke sini, atau <span class="link">pilih</span>
+          </div>
+          <div class="dz-meta" aria-live="polite"></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <label class="label">Secret file <span class="hint">(opsional)</span></label>
+        <div class="dropzone" data-for="secret_file">
+          <input id="secret_file" name="secret_file" type="file">
+          <div class="dz-in">
+            <strong>Tarik & lepas</strong> file rahasia, atau <span class="link">pilih</span>
+          </div>
+          <div class="dz-meta" aria-live="polite"></div>
+        </div>
+
+        <label class="label">Atau masukkan teks</label>
+        <textarea name="secret_text" rows="6" placeholder="Tulis rahasia di sini (jika tidak meng-upload file)"></textarea>
+
+        <div class="actions">
+          <button class="btn primary" type="submit">Embed & Unduh Stego Image</button>
+          <span class="muted">Kapasitas ≈ (lebar × tinggi × 3 − 32) / 8 byte</span>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Extract (Ambil Data)</h2>
+      <form action="{{ url_for('extract_route') }}" method="post" enctype="multipart/form-data" class="form">
+        <label class="label">Stego image</label>
+        <div class="dropzone" data-for="stego_image">
+          <input id="stego_image" name="stego_image" type="file" accept="image/*" required>
+          <div class="dz-in">
+            <strong>Tarik & lepas</strong> stego image, atau <span class="link">pilih</span>
+          </div>
+          <div class="dz-meta" aria-live="polite"></div>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" type="submit">Extract & Lihat Hasil</button>
+        </div>
+      </form>
+
+      <div class="tip">
+        <strong>Tips:</strong> Hindari JPEG untuk embed. Jika butuh privasi ekstra, saya bisa tambahkan enkripsi (password).
       </div>
-    {% endif %}
-  {% endwith %}
-
-  <div class="card">
-    <h2>Embed (Sisipkan data ke image)</h2>
-    <form action="{{ url_for('embed_route') }}" method="post" enctype="multipart/form-data">
-      <label>Cover image (PNG / BMP direkomendasikan)</label>
-      <input type="file" name="cover_image" accept="image/*" required>
-
-      <label>Secret file (opsional — pilih salah satu antara upload file atau teks)</label>
-      <input type="file" name="secret_file" >
-
-      <label>Atau masukkan teks (jika tidak meng-upload file)</label>
-      <textarea name="secret_text" rows="6" placeholder="Masukkan teks rahasia di sini..."></textarea>
-
-      <div style="margin-top:12px;">
-        <button type="submit">Embed & Download Stego Image</button>
-      </div>
-
-      <p class="note">Catatan: aplikasi ini menyimpan nama file dan isi file ke dalam image. Kapasitas bergantung pada resolusi cover image (3 bit/pixel). Jangan gunakan JPEG (lossy) sebagai cover jika ingin menjaga keutuhan data.</p>
-    </form>
-  </div>
-
-  <div class="card">
-    <h2>Extract (Ambil data dari stego image)</h2>
-    <form action="{{ url_for('extract_route') }}" method="post" enctype="multipart/form-data">
-      <label>Stego image (hasil embed)</label>
-      <input type="file" name="stego_image" accept="image/*" required>
-      <div style="margin-top:12px;">
-        <button type="submit">Extract & Download Secret</button>
-      </div>
-    </form>
-  </div>
-
-  <footer style="margin-top:24px;">
-    <p class="note">Built with Flask + Pillow. Untuk fitur lebih lanjut: enkripsi password-based, randomised embedding order, integrity-check (CRC), atau GUI—saya bisa bantu kembangkan.</p>
-  </footer>
-</body>
-</html>
+    </div>
+  </section>
+{% endblock %}

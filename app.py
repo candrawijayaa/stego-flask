@@ -1,14 +1,14 @@
-from flask import Flask, render_template, request, send_file, flash, redirect, url_for
+from flask import Flask, render_template, request, send_file, flash, redirect, url_for, session
 from PIL import Image
 from io import BytesIO
-import sys
 import os
 
-app = Flask(__name__)
-app.secret_key = os.urandom(24)  # untuk flash messages; ganti di produksi
+app = Flask(__name__, static_folder="static", template_folder="templates")
+app.secret_key = os.urandom(24)
+# Batasi upload ~20MB (sesuaikan kebutuhan)
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 
-########## Helper LSB functions (adapted for in-memory files) ##########
-
+########## LSB helpers ##########
 def _int_to_bits(value: int, length: int):
     return [(value >> (length - 1 - i)) & 1 for i in range(length)]
 
@@ -36,22 +36,20 @@ def _bits_to_bytes(bits):
 
 def capacity_in_bits(img: Image.Image):
     w, h = img.size
-    return w * h * 3  # using R,G,B LSB
+    return w * h * 3
 
 def embed_bytes_into_image_obj(img: Image.Image, data: bytes) -> Image.Image:
-    """Return new Image object with data embedded (header 32-bit length + bytes)."""
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
 
     has_alpha = (img.mode == "RGBA")
-    w, h = img.size
     pixels = list(img.getdata())
 
     total_capacity = capacity_in_bits(img)
     data_len = len(data)
     needed_bits = 32 + data_len * 8
     if needed_bits > total_capacity:
-        raise ValueError(f"Not enough capacity. Need {needed_bits} bits, but image can hold {total_capacity} bits.")
+        raise ValueError(f"Kapasitas tidak cukup. Butuh {needed_bits} bit, gambar hanya {total_capacity} bit.")
 
     header_bits = _int_to_bits(data_len, 32)
     data_bits = _bytes_to_bits(data)
@@ -60,29 +58,14 @@ def embed_bytes_into_image_obj(img: Image.Image, data: bytes) -> Image.Image:
 
     new_pixels = []
     for px in pixels:
-        # px tuple of length 3 or 4
         r, g, b = px[0], px[1], px[2]
         try:
-            bit = next(bit_iter)
-            r = (r & ~1) | bit
+            r = (r & ~1) | next(bit_iter)
+            g = (g & ~1) | next(bit_iter)
+            b = (b & ~1) | next(bit_iter)
         except StopIteration:
             new_pixels.append((r, g, b, px[3]) if has_alpha else (r, g, b))
             continue
-
-        try:
-            bit = next(bit_iter)
-            g = (g & ~1) | bit
-        except StopIteration:
-            new_pixels.append((r, g, b, px[3]) if has_alpha else (r, g, b))
-            continue
-
-        try:
-            bit = next(bit_iter)
-            b = (b & ~1) | bit
-        except StopIteration:
-            new_pixels.append((r, g, b, px[3]) if has_alpha else (r, g, b))
-            continue
-
         new_pixels.append((r, g, b, px[3]) if has_alpha else (r, g, b))
 
     if len(new_pixels) < len(pixels):
@@ -93,120 +76,88 @@ def embed_bytes_into_image_obj(img: Image.Image, data: bytes) -> Image.Image:
     return out_img
 
 def extract_bytes_from_image_obj(img: Image.Image) -> bytes:
-    """Extract and return embedded raw bytes."""
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
 
-    pixels = list(img.getdata())
-    # build flat list of channel LSBs
     channel_lsbs = []
-    for px in pixels:
+    for px in img.getdata():
         r, g, b = px[0], px[1], px[2]
         channel_lsbs.extend([r & 1, g & 1, b & 1])
 
     if len(channel_lsbs) < 32:
-        raise ValueError("Image too small or no embedded header found.")
+        raise ValueError("Header tidak ditemukan atau gambar terlalu kecil.")
 
     header_bits = channel_lsbs[:32]
     data_len = _bits_to_int(header_bits)
     total_data_bits = data_len * 8
-
     start_index = 32
     end_index = start_index + total_data_bits
     if end_index > len(channel_lsbs):
-        raise ValueError("Image does not contain full embedded data or is corrupted.")
+        raise ValueError("Payload tidak lengkap atau korup.")
 
     data_bits = channel_lsbs[start_index:end_index]
-    data_bytes = _bits_to_bytes(data_bits)
-    return data_bytes
+    return _bits_to_bytes(data_bits)
 
-########## Flask routes ##########
-
+########## Routes ##########
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html")
 
 @app.route("/embed", methods=["POST"])
 def embed_route():
-    # form fields:
-    # - cover_image (file)
-    # - secret_file (file) OR secret_text (text)
-    # returns: image download
     try:
-        if "cover_image" not in request.files:
-            flash("Tidak ada file cover image diupload.")
-            return redirect(url_for("index"))
-        cover_file = request.files["cover_image"]
-        if cover_file.filename == "":
-            flash("Pilih file cover image.")
+        cover_file = request.files.get("cover_image")
+        if not cover_file or cover_file.filename == "":
+            flash("Pilih cover image (PNG/BMP direkomendasikan).")
             return redirect(url_for("index"))
 
-        # read image
         cover_bytes = cover_file.read()
         try:
             cover_img = Image.open(BytesIO(cover_bytes))
-        except Exception as e:
-            flash("Gagal membuka image. Pastikan file image valid (PNG/BMP/RGB).")
+        except Exception:
+            flash("Gagal membuka image. Pastikan file image valid.")
             return redirect(url_for("index"))
 
-        # choose secret bytes from uploaded file or text input
         secret_bytes = b""
-        if "secret_file" in request.files and request.files["secret_file"].filename != "":
-            sf = request.files["secret_file"]
-            secret_bytes = sf.read()
-            secret_filename = sf.filename
+        secret_filename = "secret.txt"
+        secret_upload = request.files.get("secret_file")
+        if secret_upload and secret_upload.filename != "":
+            secret_bytes = secret_upload.read()
+            secret_filename = secret_upload.filename
         else:
-            secret_text = request.form.get("secret_text", "")
-            if secret_text.strip() == "":
-                flash("Berikan secret: upload file atau masukkan teks.")
+            secret_text = request.form.get("secret_text", "").strip()
+            if not secret_text:
+                flash("Masukkan teks atau upload file rahasia.")
                 return redirect(url_for("index"))
             secret_bytes = secret_text.encode("utf-8")
-            secret_filename = "secret.txt"
 
-        # optional label: we will store the filename as first part of payload (length + name + marker + data)
-        # To keep simple, we'll prefix the payload with the filename length (16-bit) + filename bytes + raw data
         fn_bytes = secret_filename.encode("utf-8")
         if len(fn_bytes) > 65535:
             flash("Nama file terlalu panjang.")
             return redirect(url_for("index"))
+        payload = len(fn_bytes).to_bytes(2, "big") + fn_bytes + secret_bytes
 
-        fn_len_bits = len(fn_bytes).to_bytes(2, "big")  # 2 bytes for filename length
-        payload = fn_len_bits + fn_bytes + secret_bytes
+        out_img = embed_bytes_into_image_obj(cover_img, payload)
 
-        # attempt embedding
-        try:
-            out_img = embed_bytes_into_image_obj(cover_img, payload)
-        except ValueError as ve:
-            flash(str(ve))
-            return redirect(url_for("index"))
-
-        # prepare image bytes to send
         buf = BytesIO()
-        # preserve PNG to avoid lossy compression
-        out_format = "PNG"
-        out_img.save(buf, format=out_format)
+        out_img.save(buf, format="PNG")
         buf.seek(0)
+        base = os.path.splitext(cover_file.filename)[0] or "stego"
+        return send_file(buf, mimetype="image/png", as_attachment=True, download_name=f"stego_{base}.png")
 
-        return send_file(
-            buf,
-            mimetype="image/png",
-            as_attachment=True,
-            download_name=f"stego_{cover_file.filename.rsplit('.',1)[0]}.png"
-        )
-
+    except ValueError as ve:
+        flash(str(ve))
+        return redirect(url_for("index"))
     except Exception as e:
-        flash("Terjadi kesalahan saat embedding: " + str(e))
+        flash(f"Terjadi kesalahan saat embedding: {e}")
         return redirect(url_for("index"))
 
 @app.route("/extract", methods=["POST"])
 def extract_route():
     try:
-        if "stego_image" not in request.files:
-            flash("Tidak ada file image untuk diekstrak.")
-            return redirect(url_for("index"))
-        stego_file = request.files["stego_image"]
-        if stego_file.filename == "":
-            flash("Pilih file stego image.")
+        stego_file = request.files.get("stego_image")
+        if not stego_file or stego_file.filename == "":
+            flash("Pilih stego image.")
             return redirect(url_for("index"))
 
         stego_bytes = stego_file.read()
@@ -216,52 +167,55 @@ def extract_route():
             flash("Gagal membuka image. Pastikan file image valid.")
             return redirect(url_for("index"))
 
-        try:
-            payload = extract_bytes_from_image_obj(stego_img)
-        except ValueError as ve:
-            flash(str(ve))
-            return redirect(url_for("index"))
+        payload = extract_bytes_from_image_obj(stego_img)
 
-        # parse payload: first 2 bytes = filename length, then filename, then data
         if len(payload) < 2:
-            flash("Payload tidak valid / terlalu pendek.")
+            flash("Payload tidak valid.")
             return redirect(url_for("index"))
 
         fn_len = int.from_bytes(payload[:2], "big")
         if len(payload) < 2 + fn_len:
-            flash("Payload korup atau tidak lengkap.")
+            flash("Payload korup / tidak lengkap.")
             return redirect(url_for("index"))
 
         filename = payload[2:2+fn_len].decode("utf-8", errors="replace")
         filedata = payload[2+fn_len:]
 
-        # if filedata looks like text (utf-8 decodeable), we can show a small preview.
+        session["extracted_filename"] = filename
+        session["extracted_filedata"] = filedata
+
+        # Preview
         is_text = False
         preview_text = ""
         try:
             preview_text = filedata.decode("utf-8")
-            # limit preview length
-            if len(preview_text) > 1000:
-                preview_text = preview_text[:1000] + "\n...[truncated]"
+            if len(preview_text) > 2000:
+                preview_text = preview_text[:2000] + "\n...[dipotong]"
             is_text = True
         except Exception:
-            is_text = False
+            pass
 
-        # prepare file to download
-        buf = BytesIO()
-        buf.write(filedata)
-        buf.seek(0)
+        return render_template("result.html", filename=filename, is_text=is_text, preview_text=preview_text)
 
-        return send_file(
-            buf,
-            mimetype="application/octet-stream",
-            as_attachment=True,
-            download_name=filename
-        )
-
-    except Exception as e:
-        flash("Terjadi kesalahan saat ekstraksi: " + str(e))
+    except ValueError as ve:
+        flash(str(ve))
         return redirect(url_for("index"))
+    except Exception as e:
+        flash(f"Terjadi kesalahan saat ekstraksi: {e}")
+        return redirect(url_for("index"))
+
+@app.route("/download_extracted")
+def download_extracted():
+    if "extracted_filedata" not in session:
+        flash("Tidak ada file diekstrak.")
+        return redirect(url_for("index"))
+
+    filedata = session["extracted_filedata"]
+    filename = session.get("extracted_filename", "secret.bin")
+    buf = BytesIO()
+    buf.write(filedata)
+    buf.seek(0)
+    return send_file(buf, mimetype="application/octet-stream", as_attachment=True, download_name=filename)
 
 if __name__ == "__main__":
     app.run(debug=True)

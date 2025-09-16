@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{% block title %}Stego-Web{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <div class="brand">
+        <span class="logo">🕵️‍♂️</span>
+        <a href="{{ url_for('index') }}">Stego-Web</a>
+      </div>
+      <nav class="nav">
+        <a href="{{ url_for('index') }}" class="nav-link">Home</a>
+        <a href="https://pillow.readthedocs.io/" target="_blank" rel="noopener" class="nav-link">Pillow Docs</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="alert" role="alert">
+          {% for m in messages %}<div>{{ m }}</div>{% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container foot-inner">
+      <p>© {{ 2025 }} Stego-Web • LSB • Responsif & Aksesibel</p>
+      <p class="muted">Gunakan PNG/BMP untuk hasil terbaik. JPEG bersifat lossy.</p>
+    </div>
+  </footer>
+</body>
+</html>
