@@ -121,7 +121,10 @@ def extract_bytes_from_image_obj(img: Image.Image) -> bytes:
     return data_bytes
 
 ########## Flask routes ##########
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
 
+app = Flask(__name__, template_folder=TEMPLATE_DIR)
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html")
